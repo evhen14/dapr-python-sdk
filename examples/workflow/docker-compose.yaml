@@ -1,0 +1,134 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - 40001:40001
+    command: python simple.py
+    environment:
+      DURABLETASK_SIDECAR_LOGLEVEL: Debug
+    depends_on:
+      - placement
+      - scheduler
+    networks:
+      - default
+
+  dapr:
+    image: "daprio/daprd:1.15.4-rc.2"
+    command:
+      [
+        "./daprd",
+        "--app-id",
+        "workflow",
+        "--placement-host-address",
+        "placement:40006",
+        "--scheduler-host-address",
+        "scheduler:40007",
+        "--dapr-http-port",
+        "3500",
+        "--dapr-grpc-port",
+        "40001",
+        "--resources-path",
+        "./components",
+        "--log-level",
+        "debug",
+        "--enable-metrics",
+        "false",
+      ]
+    environment:
+      APP_API_TOKEN: test
+    volumes:
+      - ./dapr/:/components
+    depends_on:
+      app:
+        condition: service_started
+      placement:
+        condition: service_started
+      scheduler:
+        condition: service_started
+      create-tables:
+        condition: service_healthy
+    network_mode: "service:app"
+
+  placement:
+    image: "daprio/dapr:1.15.4-rc.2"
+    command:
+      [
+        "./placement",
+        "-port",
+        "40006",
+        "--log-level",
+        "debug",
+        "--enable-metrics",
+        "false",
+      ]
+    ports:
+      - "40006:40006"
+    networks:
+      - default
+
+  scheduler:
+    image: "daprio/dapr:1.15.4-rc.2"
+    ports:
+      - "40007:40007"
+    command:
+      [
+        "./scheduler",
+        "--port",
+        "40007",
+        "--log-level",
+        "debug",
+        "--enable-metrics",
+        "false",
+        "--etcd-data-dir",
+        "/data",
+      ]
+    user: root
+    networks:
+      - default
+
+  redis:
+    image: public.ecr.aws/docker/library/redis
+    ports:
+      - "9375:6379"
+    networks:
+      - default
+
+  dynamodb:
+    image: amazon/dynamodb-local
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"]
+    ports:
+      - "8111:8000"
+    networks:
+      - default
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8000 | grep -qE '200|400' || exit 1"]
+      interval: 1s
+      timeout: 1s
+      retries: 5
+  
+  create-tables:
+    image: amazon/aws-cli
+    volumes:
+      - ./scripts:/scripts
+    entrypoint: /scripts/create_dynamodb_tables.sh
+    depends_on:
+      dynamodb:
+        condition: service_healthy
+    environment:
+      AWS_DEFAULT_REGION: us-west-2
+      AWS_ACCESS_KEY_ID: dummy
+      AWS_SECRET_ACCESS_KEY: dummy
+    healthcheck:
+      test: ["CMD", "sh", "-c", "aws dynamodb describe-table --table-name actors-store --endpoint-url http://dynamodb:8000 > /dev/null 2>&1 || exit 1"]
+      interval: 1s
+      timeout: 1s
+      retries: 5
+      start_period: 1s
+    networks:
+      - default
+
+networks:
+  default:
+    name: workflow-example

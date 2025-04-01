@@ -1,0 +1,22 @@
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: actors-store
+spec:
+  type: state.aws.dynamodb
+  version: v1
+  metadata:
+    - name: table
+      value: "actors-store"
+    - name: partitionKey
+      value: "key"
+    - name: endpoint
+      value: "http://dynamodb:8000"
+    - name: accessKey
+      value: "dummy"
+    - name: secretKey
+      value: "dummy"
+    - name: region
+      value: "us-west-2"
+    - name: actorStateStore
+      value: "true"

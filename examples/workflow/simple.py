@@ -9,6 +9,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import logging
 from datetime import timedelta
 from time import sleep
 from dapr.ext.workflow import (
@@ -46,12 +47,15 @@ retry_policy = RetryPolicy(
     retry_timeout=timedelta(seconds=100),
 )
 
-wfr = WorkflowRuntime()
+logging.info('sleep for dapr to fully init')
+sleep(10)
+
+wfr = WorkflowRuntime(port="40001")
 
 
 @wfr.workflow(name='hello_world_wf')
 def hello_world_wf(ctx: DaprWorkflowContext, wf_input):
-    print(f'{wf_input}')
+    logging.info(f'{wf_input}')
     yield ctx.call_activity(hello_act, input=1)
     yield ctx.call_activity(hello_act, input=10)
     yield ctx.call_activity(hello_retryable_act, retry_policy=retry_policy)
@@ -63,7 +67,7 @@ def hello_world_wf(ctx: DaprWorkflowContext, wf_input):
     winner = yield when_any([event, timeout])
 
     if winner == timeout:
-        print('Workflow timed out waiting for event')
+        logging.info('Workflow timed out waiting for event')
         return 'Timeout'
 
     yield ctx.call_activity(hello_act, input=100)
@@ -75,17 +79,17 @@ def hello_world_wf(ctx: DaprWorkflowContext, wf_input):
 def hello_act(ctx: WorkflowActivityContext, wf_input):
     global counter
     counter += wf_input
-    print(f'New counter value is: {counter}!', flush=True)
+    logging.info(f'New counter value is: {counter}!', flush=True)
 
 
 @wfr.activity(name='hello_retryable_act')
 def hello_retryable_act(ctx: WorkflowActivityContext):
     global retry_count
     if (retry_count % 2) == 0:
-        print(f'Retry count value is: {retry_count}!', flush=True)
+        logging.info(f'Retry count value is: {retry_count}!', flush=True)
         retry_count += 1
         raise ValueError('Retryable Error')
-    print(f'Retry count value is: {retry_count}! This print statement verifies retry', flush=True)
+    logging.info(f'Retry count value is: {retry_count}! This print statement verifies retry', flush=True)
     retry_count += 1
 
 
@@ -94,7 +98,7 @@ def child_retryable_wf(ctx: DaprWorkflowContext):
     global child_orchestrator_string, child_orchestrator_count
     if not ctx.is_replaying:
         child_orchestrator_count += 1
-        print(f'Appending {child_orchestrator_count} to child_orchestrator_string!', flush=True)
+        logging.info(f'Appending {child_orchestrator_count} to child_orchestrator_string!', flush=True)
         child_orchestrator_string += str(child_orchestrator_count)
     yield ctx.call_activity(
         act_for_child_wf, input=child_orchestrator_count, retry_policy=retry_policy
@@ -107,7 +111,7 @@ def child_retryable_wf(ctx: DaprWorkflowContext):
 def act_for_child_wf(ctx: WorkflowActivityContext, inp):
     global child_orchestrator_string, child_act_retry_count
     inp_char = chr(96 + inp)
-    print(f'Appending {inp_char} to child_orchestrator_string!', flush=True)
+    logging.info(f'Appending {inp_char} to child_orchestrator_string!', flush=True)
     child_orchestrator_string += inp_char
     if child_act_retry_count % 2 == 0:
         child_act_retry_count += 1
@@ -117,9 +121,9 @@ def act_for_child_wf(ctx: WorkflowActivityContext, inp):
 
 def main():
     wfr.start()
-    wf_client = DaprWorkflowClient()
+    wf_client = DaprWorkflowClient(port="40001")
 
-    print('==========Start Counter Increase as per Input:==========')
+    logging.info('==========Start Counter Increase as per Input:==========')
     wf_client.schedule_new_workflow(
         workflow=hello_world_wf, input=input_data, instance_id=instance_id
     )
@@ -136,32 +140,32 @@ def main():
     # Pause Test
     wf_client.pause_workflow(instance_id=instance_id)
     metadata = wf_client.get_workflow_state(instance_id=instance_id)
-    print(f'Get response from {workflow_name} after pause call: {metadata.runtime_status.name}')
+    logging.info(f'Get response from {workflow_name} after pause call: {metadata.runtime_status.name}')
 
     # Resume Test
     wf_client.resume_workflow(instance_id=instance_id)
     metadata = wf_client.get_workflow_state(instance_id=instance_id)
-    print(f'Get response from {workflow_name} after resume call: {metadata.runtime_status.name}')
+    logging.info(f'Get response from {workflow_name} after resume call: {metadata.runtime_status.name}')
 
     sleep(2)  # Give the workflow time to reach the event wait state
     wf_client.raise_workflow_event(instance_id=instance_id, event_name=event_name, data=event_data)
 
-    print('========= Waiting for Workflow completion', flush=True)
+    logging.info('========= Waiting for Workflow completion', flush=True)
     try:
         state = wf_client.wait_for_workflow_completion(instance_id, timeout_in_seconds=30)
         if state.runtime_status.name == 'COMPLETED':
-            print('Workflow completed! Result: {}'.format(state.serialized_output.strip('"')))
+            logging.info('Workflow completed! Result: {}'.format(state.serialized_output.strip('"')))
         else:
-            print(f'Workflow failed! Status: {state.runtime_status.name}')
+            logging.info(f'Workflow failed! Status: {state.runtime_status.name}')
     except TimeoutError:
-        print('*** Workflow timed out!')
+        logging.info('*** Workflow timed out!')
 
     wf_client.purge_workflow(instance_id=instance_id)
     try:
         wf_client.get_workflow_state(instance_id=instance_id)
     except DaprInternalError as err:
         if non_existent_id_error in err._message:
-            print('Instance Successfully Purged')
+            logging.info('Instance Successfully Purged')
 
     wfr.shutdown()
 
